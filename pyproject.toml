@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "disk-cleaner"
+version = "0.1.0"
+description = "Windows temporary file cleaner CLI"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0.0",
+    "tqdm>=4.0.0",
+]
+
+[project.scripts]
+disk-cleaner = "disk_cleaner.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/disk_cleaner"]
