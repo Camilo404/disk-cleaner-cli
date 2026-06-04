@@ -10,6 +10,10 @@ block_cipher = None
 python_dir = os.path.dirname(sys.executable)
 python_dll = os.path.join(python_dir, 'python314.dll')
 
+# Use icon only if it exists locally, otherwise the default is used.
+icon_path = os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'icon.ico')
+icon = icon_path if os.path.exists(icon_path) else None
+
 a = Analysis(
     ['src\\disk_cleaner\\__main__.py'],
     pathex=[],
@@ -67,7 +71,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,
-    icon='C:\\Users\\Innovati-3\\Documents\\Projects\\disk-cleaner-cli\\icon.ico',
+    icon=icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -150,15 +150,19 @@ class Cleaner:
         Yields:
             Tuples of (file_path, success, bytes_freed, location_name, error_msg)
         """
+        cancelled_once = False
         for scan_result in summary.results:
+            if cancelled_once:
+                break
             location_name = scan_result.location.name
             total_files = len(scan_result.files)
             processed = 0
 
             for file_path, size, _ in scan_result.files:
                 if self._is_cancelled():
+                    cancelled_once = True
                     yield (file_path, False, 0, location_name, "Cancelled")
-                    continue
+                    break
 
                 success, freed, error = self._delete_single_file(file_path, size)
                 processed += 1

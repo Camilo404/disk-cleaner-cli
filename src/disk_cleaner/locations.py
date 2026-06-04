@@ -85,6 +85,25 @@ def get_temp_locations() -> List[TempLocation]:
     return [loc for loc in locations if loc.path]
 
 
+def get_all_locations(include_extended: bool = False) -> List[TempLocation]:
+    """
+    Get all temp locations, optionally including extended (browser, app) caches.
+
+    Args:
+        include_extended: If True, include browser/package manager/GPU/app caches.
+
+    Returns:
+        Combined list of TempLocation objects.
+    """
+    locations = get_temp_locations()
+    if include_extended:
+        # Imported here to avoid an import cycle at module load.
+        from disk_cleaner.locations_extended import get_extended_locations
+
+        locations = locations + get_extended_locations()
+    return locations
+
+
 def is_admin() -> bool:
     """Check if the current process has admin privileges."""
     try:

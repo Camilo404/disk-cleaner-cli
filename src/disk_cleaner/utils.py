@@ -164,7 +164,11 @@ class PathValidator:
 
 
 def load_config(config_path: Optional[str] = None) -> dict:
-    """Load configuration from JSON file."""
+    """Load configuration from JSON file.
+
+    The returned dict always contains a key ``_config_path`` with the resolved
+    path that was used, so callers can display it to the user.
+    """
     if config_path is None:
         config_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "config.json"
@@ -174,11 +178,17 @@ def load_config(config_path: Optional[str] = None) -> dict:
     try:
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                cfg = json.load(f)
+                cfg.setdefault("exclusions", {"patterns": [], "paths": []})
+                cfg["_config_path"] = config_path
+                return cfg
     except (json.JSONDecodeError, IOError):
         pass
 
-    return {"exclusions": {"patterns": [], "paths": []}}
+    return {
+        "exclusions": {"patterns": [], "paths": []},
+        "_config_path": config_path,
+    }
 
 
 def format_size(size_bytes: float) -> str:
@@ -203,7 +213,9 @@ def get_file_age_days(file_path: str) -> int:
 
 
 def walk_directory(
-    directory: str, min_age_days: int = 0
+    directory: str,
+    min_age_days: int = 0,
+    min_size_bytes: int = 0,
 ) -> Iterator[Tuple[str, int, int]]:
     """
     Walk a directory and yield (file_path, size, age_days) tuples.
@@ -212,6 +224,7 @@ def walk_directory(
     Args:
         directory: Path to walk
         min_age_days: Only include files older than this many days
+        min_size_bytes: Only include files with size >= this many bytes (0 = no limit)
 
     Yields:
         Tuples of (file_path, size_in_bytes, age_in_days)
@@ -229,7 +242,7 @@ def walk_directory(
                                     dirs_to_visit.append(entry.path)
                             elif entry.is_file(follow_symlinks=False):
                                 stat = entry.stat(follow_symlinks=False)
-                                if stat.st_size > 0:
+                                if stat.st_size >= max(min_size_bytes, 1):
                                     mtime = stat.st_mtime
                                     age_days = int((datetime.now().timestamp() - mtime) / 86400)
                                     if age_days >= min_age_days:
@@ -243,19 +256,53 @@ def walk_directory(
 
 
 def is_locked(file_path: str) -> bool:
-    """Check if a file is likely locked by another process (less aggressive)."""
+    """
+    Check if a file is currently locked by another process.
+
+    Attempts to open the file in exclusive read mode. If another process has the
+    file open with FILE_SHARE_NONE (or any non-overlapping access), the open
+    fails and we consider the file locked.
+
+    Args:
+        file_path: Path to the file to test.
+
+    Returns:
+        True if the file cannot be opened (likely in use), False otherwise.
+    """
+    if not os.path.exists(file_path):
+        return False
+
+    GENERIC_READ = 0x80000000
+    OPEN_EXISTING = 3
+    FILE_SHARE_READ = 0x00000001
+    FILE_SHARE_WRITE = 0x00000002
+    FILE_SHARE_DELETE = 0x00000004
+    INVALID_HANDLE_VALUE = -1
+
     try:
-        attrs = ctypes.windll.kernel32.GetFileAttributesW(file_path)
-        if attrs == -1:
-            return False
-        FILE_ATTRIBUTE_READONLY = 0x1
-        FILE_ATTRIBUTE_SYSTEM = 0x4
-        FILE_ATTRIBUTE_HIDDEN = 0x2
-        if attrs & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM):
-            return True
+        handle = ctypes.windll.kernel32.CreateFileW(
+            file_path,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            0x80,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+        if handle == INVALID_HANDLE_VALUE or handle == 0:
+            err = ctypes.GetLastError()
+            errno_to_sharing = {32, 33, 5}  # ERROR_SHARING_VIOLATION, LOCK_VIOLATION, ACCESS_DENIED
+            if err in errno_to_sharing:
+                return True
+            return True  # any other open failure: treat as locked to be safe
+
+        try:
+            ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            pass
         return False
     except Exception:
-        return False
+        return True
 
 
 def confirm_deletion(total_size: int, total_files: int) -> bool:

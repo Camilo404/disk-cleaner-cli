@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from disk_cleaner.locations import TempLocation, get_temp_locations, is_admin
+from disk_cleaner.locations import TempLocation, get_all_locations, get_temp_locations, is_admin
 from disk_cleaner.utils import PathValidator, get_file_age_days, load_config, walk_directory
 
 
@@ -58,6 +58,8 @@ class Scanner:
     def __init__(
         self,
         min_age_days: int = 0,
+        min_size_bytes: int = 0,
+        include_extended: bool = False,
         enabled_locations: Optional[Set[str]] = None,
         cancelled: Optional[List[bool]] = None,
         progress_callback: ProgressCallback = None,
@@ -68,12 +70,16 @@ class Scanner:
 
         Args:
             min_age_days: Only scan files older than this many days
+            min_size_bytes: Only scan files whose size is >= this many bytes
+            include_extended: If True, also scan extended (browser, app) locations
             enabled_locations: Set of location names to scan (None = all)
             cancelled: Shared cancellation flag list [cancelled]
             progress_callback: Optional callback(location_name, current, total) for progress per file
             location_progress_callback: Optional callback(location_name, file_count, total_size) for progress per location
         """
         self.min_age_days = min_age_days
+        self.min_size_bytes = min_size_bytes
+        self.include_extended = include_extended
         self.enabled_locations = enabled_locations
         self._cancelled = cancelled
         self._progress_callback = progress_callback
@@ -126,7 +132,9 @@ class Scanner:
         try:
             files = []
             base_path = location.path
-            for file_path, size, age in walk_directory(base_path, self.min_age_days):
+            for file_path, size, age in walk_directory(
+                base_path, self.min_age_days, self.min_size_bytes
+            ):
                 if self._is_cancelled():
                     result.error = "Cancelled"
                     break
@@ -150,7 +158,7 @@ class Scanner:
 
     def scan_all(self, parallel: bool = True) -> ScanSummary:
         """Scan all temp locations."""
-        locations = get_temp_locations()
+        locations = get_all_locations(include_extended=self.include_extended)
         summary = ScanSummary()
 
         if parallel and len(locations) > 1:

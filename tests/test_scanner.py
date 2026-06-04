@@ -106,7 +106,7 @@ class TestScanner:
         scanner = Scanner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("disk_cleaner.scanner.get_temp_locations") as mock_get_locs:
+            with patch("disk_cleaner.scanner.get_all_locations") as mock_get_locs:
                 mock_get_locs.return_value = [
                     TempLocation(name="Test1", path=tmpdir, requires_admin=False),
                     TempLocation(

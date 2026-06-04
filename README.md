@@ -113,12 +113,27 @@ disk-cleaner config show
 | Option | Description |
 |--------|-------------|
 | `--min-age N` | Only scan/delete files older than N days |
+| `--min-size N` | Only scan/delete files >= N bytes |
+| `--include-extended` | Also scan browser, package manager, GPU, and app caches |
 | `--format table\|json` | Output format (default: table) |
 | `--verbose` | Show detailed file listing (up to 10 per location) |
 | `--preview-full` | Show all files without truncation |
 | `--yes` | Skip confirmation prompt |
 | `--recycle` | Send files to Recycle Bin instead of permanent delete |
 | `--report FILE` | Save deletion report to JSON file |
+
+### Examples
+
+```bash
+# Clean only files older than 7 days, larger than 1 MB, no Recycle Bin
+disk-cleaner clean --min-age 7 --min-size 1048576 --yes
+
+# Scan including browser and application caches
+disk-cleaner scan --include-extended --format json
+
+# Dry-run clean with size filter and report
+disk-cleaner clean --min-size 524288 --report cleanup.json
+```
 
 ## Temp Locations
 
@@ -138,7 +153,7 @@ disk-cleaner config show
 
 ### Extended Locations (Browser & Application Caches)
 
-These must be explicitly enabled in interactive mode:
+Enable with `--include-extended` (CLI) or option `[6] -> E` in interactive mode:
 
 | Category | Locations |
 |----------|-----------|

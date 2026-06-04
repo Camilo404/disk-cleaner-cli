@@ -11,7 +11,7 @@ import click
 
 from disk_cleaner import __version__
 from disk_cleaner.cleaner import Cleaner, DeletionSummary
-from disk_cleaner.locations import get_temp_locations, is_admin
+from disk_cleaner.locations import get_all_locations, get_temp_locations, is_admin
 from disk_cleaner.scanner import ScanSummary, Scanner
 from disk_cleaner.utils import format_size, load_config
 
@@ -182,7 +182,7 @@ class MenuFormatter:
         click.echo()
         click.echo(click.style("  [" + "*" + "] Analizando...", fg="cyan", bold=True))
 
-        locations = get_temp_locations()
+        locations = get_all_locations(include_extended=True)
         enabled = enabled_locations or {loc.name for loc in locations}
         max_size = max((r.total_size for r in summary.results if r.accessible), default=1)
 
@@ -312,6 +312,7 @@ class InteractiveMenu:
         self.scanner: Optional[Scanner] = None
         self.cleaner: Optional[Cleaner] = None
         self.enabled_locations: Set[str] = set()
+        self._include_extended: bool = False
         self._all_locations = [loc.name for loc in get_temp_locations()]
         self._is_admin = is_admin()
         self._fmt = MenuFormatter()
@@ -396,6 +397,7 @@ class InteractiveMenu:
 
             self.scanner = Scanner(
                 enabled_locations=self.enabled_locations or None,
+                include_extended=self._include_extended,
                 cancelled=self._cancelled,
                 location_progress_callback=on_location_complete,
             )
@@ -408,7 +410,7 @@ class InteractiveMenu:
         """Show quick summary with visual bars."""
         from tqdm import tqdm
         self._reset_cancelled()
-        locations = get_temp_locations()
+        locations = get_all_locations(include_extended=self._include_extended)
         enabled = self.enabled_locations or {loc.name for loc in locations}
         locations_to_scan = [loc for loc in locations if loc.name in enabled]
 
@@ -426,6 +428,7 @@ class InteractiveMenu:
 
             self.scanner = Scanner(
                 enabled_locations=self.enabled_locations or None,
+                include_extended=self._include_extended,
                 cancelled=self._cancelled,
                 location_progress_callback=on_location_complete,
             )
@@ -438,7 +441,7 @@ class InteractiveMenu:
         """Clean temp files with visual feedback."""
         from tqdm import tqdm
         self._reset_cancelled()
-        locations = get_temp_locations()
+        locations = get_all_locations(include_extended=self._include_extended)
         enabled = self.enabled_locations or {loc.name for loc in locations}
         locations_to_scan = [loc for loc in locations if loc.name in enabled]
 
@@ -457,6 +460,7 @@ class InteractiveMenu:
 
             self.scanner = Scanner(
                 enabled_locations=self.enabled_locations or None,
+                include_extended=self._include_extended,
                 cancelled=self._cancelled,
                 location_progress_callback=on_scan_location,
             )
@@ -533,7 +537,7 @@ class InteractiveMenu:
 
     def _select_locations(self):
         """Select which locations to clean with interactive UI."""
-        locations = get_temp_locations()
+        locations = get_all_locations(include_extended=self._include_extended)
         all_names = [loc.name for loc in locations]
 
         if not self.enabled_locations:
@@ -542,8 +546,17 @@ class InteractiveMenu:
         self._fmt.print_location_selector(locations, self.enabled_locations)
 
         click.echo()
+        click.echo(
+            click.style("  [E] ", fg="magenta", bold=True)
+            + click.style(
+                f"Ubicaciones extendidas (navegadores, apps): "
+                + ("ON" if self._include_extended else "OFF"),
+                fg="white",
+            )
+        )
+        click.echo()
         choice = click.prompt(
-            click.style("  > Seleccion: ", fg="cyan", bold=True),
+            click.style("  > Seleccion (o 'E'): ", fg="cyan", bold=True),
             default="",
             show_default=False,
         )
@@ -556,6 +569,14 @@ class InteractiveMenu:
         elif choice == "none":
             self.enabled_locations = set()
             self._fmt.print_message("[OK] Ninguna ubicacion seleccionada", "yellow")
+        elif choice == "e":
+            self._include_extended = not self._include_extended
+            locations = get_all_locations(include_extended=self._include_extended)
+            all_names = [loc.name for loc in locations]
+            if not self.enabled_locations:
+                self.enabled_locations = set(all_names)
+            state = "activadas" if self._include_extended else "desactivadas"
+            self._fmt.print_message(f"[OK] Ubicaciones extendidas {state}", "magenta")
         else:
             selected = set()
             for part in choice.split(","):
@@ -617,10 +638,19 @@ class InteractiveMenu:
 
 @main.command()
 @click.option("--min-age", type=int, default=0, help="Only scan files older than N days")
+@click.option("--min-size", type=int, default=0, help="Only scan files >= N bytes")
+@click.option("--include-extended", is_flag=True, help="Also scan browser, package manager, GPU, and app caches")
 @click.option("--verbose", is_flag=True, help="Show detailed file listing (up to 10 per location)")
 @click.option("--preview-full", is_flag=True, help="Show all files in results")
 @click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
-def scan(min_age: int, verbose: bool, preview_full: bool, output_format: str):
+def scan(
+    min_age: int,
+    min_size: int,
+    include_extended: bool,
+    verbose: bool,
+    preview_full: bool,
+    output_format: str,
+):
     """Scan temporary file locations."""
     cancelled: List[bool] = [False]
 
@@ -630,7 +660,12 @@ def scan(min_age: int, verbose: bool, preview_full: bool, output_format: str):
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    scanner = Scanner(min_age_days=min_age, cancelled=cancelled)
+    scanner = Scanner(
+        min_age_days=min_age,
+        min_size_bytes=min_size,
+        include_extended=include_extended,
+        cancelled=cancelled,
+    )
     summary = scanner.scan_all()
 
     if output_format == "json":
@@ -643,12 +678,16 @@ def scan(min_age: int, verbose: bool, preview_full: bool, output_format: str):
 @click.option("--dry-run", is_flag=True, default=True)
 @click.option("--yes", "auto_confirm", is_flag=True)
 @click.option("--min-age", type=int, default=0)
+@click.option("--min-size", type=int, default=0, help="Only delete files >= N bytes")
+@click.option("--include-extended", is_flag=True, help="Also include browser, package manager, GPU, and app caches")
 @click.option("--recycle", "use_recycle_bin", is_flag=True, help="Send files to Recycle Bin instead of permanent delete")
 @click.option("--report", "report_file", type=click.Path(), default=None, help="Save deletion report to file (JSON)")
 def clean(
     dry_run: bool,
     auto_confirm: bool,
     min_age: int,
+    min_size: int,
+    include_extended: bool,
     use_recycle_bin: bool,
     report_file: str,
 ):
@@ -661,7 +700,12 @@ def clean(
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    scanner = Scanner(min_age_days=min_age, cancelled=cancelled)
+    scanner = Scanner(
+        min_age_days=min_age,
+        min_size_bytes=min_size,
+        include_extended=include_extended,
+        cancelled=cancelled,
+    )
     summary = scanner.scan_all()
 
     if summary.total_files == 0:
@@ -699,9 +743,28 @@ def config():
 def show():
     """Show current configuration."""
     cfg = load_config()
-    click.echo("\n=== Current Configuration ===\n")
-    click.echo(f"Exclusion patterns: {len(cfg.get('exclusions', {}).get('patterns', []))}")
-    click.echo(f"Exclusion paths: {len(cfg.get('exclusions', {}).get('paths', []))}")
+    exclusions = cfg.get("exclusions", {})
+    patterns = exclusions.get("patterns", [])
+    paths = exclusions.get("paths", [])
+
+    click.echo()
+    click.echo(click.style("=== Current Configuration ===", bold=True))
+    click.echo()
+    click.echo(click.style(f"Exclusion patterns ({len(patterns)}):", bold=True))
+    if patterns:
+        for p in patterns:
+            click.echo(f"  - {p}")
+    else:
+        click.echo("  (none)")
+    click.echo()
+    click.echo(click.style(f"Exclusion paths ({len(paths)}):", bold=True))
+    if paths:
+        for p in paths:
+            click.echo(f"  - {p}")
+    else:
+        click.echo("  (none)")
+    click.echo()
+    click.echo(click.style(f"Config file: {cfg.get('_config_path', '(default)')}"))
 
 
 def _print_summary_table(summary: ScanSummary, verbose: bool, preview_full: bool):
